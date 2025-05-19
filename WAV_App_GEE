@@ -1,0 +1,148 @@
+// Load wetlands dataset (replace with your own dataset)
+var wetland = ee.FeatureCollection("users/ashwin8199/color/final_wetlands");//add Indian-Wetlands shape file to GEE asset
+wetland = wetland.sort('AREAHA',false);
+var wetlands = wetland.limit(500)
+Map.setCenter(77,22,6);
+var wetlandsLayer = ui.Map.Layer(wetlands, {color: '000000'}, 'Wetlands');
+Map.layers().add(wetlandsLayer);
+
+var inspector1 = ui.Panel({
+  widgets: [ui.Label('Name: '),   ui.Label('Wetland Class: ')],
+  style: {position: 'bottom-right'}});
+Map.add(inspector1);  
+
+var palette = ['brown','blue', 'cyan', 'green', 'red']; // Colors for oligo, meso, and eutro
+var colorbar = ui.Thumbnail({
+  image: ee.Image.pixelLonLat().select('latitude').multiply(0.0075).add(0.5),
+  params: {min: 0,max: 1, palette: palette,  dimensions: '40x100'  },
+  style: {stretch: 'vertical', margin: '0px'}});
+var legends = ui.Panel({
+  widgets: [
+    ui.Label('Emergent', { fontSize: '12px'}),
+    ui.Label('Floating', { fontSize: '12px'}),
+    ui.Label('Submerged', { fontSize: '12px'}),
+    ui.Label('Water', { fontSize: '12px'}),
+    ui.Label('Land', { fontSize: '12px'})    ],
+  layout: ui.Panel.Layout.flow('vertical'),  style: { margin: '0px'} });
+var colorbarPanel = ui.Panel({
+  widgets:[colorbar,legends], layout:ui.Panel.Layout.flow('horizontal'), style:{position:'top-left'}});
+Map.add(colorbarPanel);
+
+
+// function showError (message){
+//   var errorPanel = ui.Panel()
+//   var errorLabel = ui.Label(message,{color:'red'})
+//   errorPanel.clear();
+//   errorPanel.add(errorLabel);
+//   Map.add(errorPanel)
+// }
+
+
+var panel = ui.Panel();
+panel.style().set({width: '30%', position: 'bottom-right'});
+ui.root.add(panel);
+var header = ui.Label('Indian wetland Aquatic Vegetation Status', 
+    {fontSize: '25px', fontWeight: 'bold', color: '4A997E'});
+var Author = ui.Label('Authors: A. Gujrati, R. Pradhan, P. Nayak, R.P. Singh, R.R. Nidamanuri');
+var text = ui.Label(
+  'This Google earth engine app is under review for publication in Wetlands. It has been developed using suitable indices to monitor Wetland Aquatic Vegetation Status.',
+    {fontSize: '15px'});
+    
+var text2 = ui.Label(
+  'Guide to use the App: First select year and month of required period and then zoom to click within the wetland boundry. The Wetland classification results will be generated.',
+    {fontSize: '15px'});
+    
+var Hpanel = ui.Panel({
+  widgets:[header,Author,text,text2],
+  });
+panel.add(Hpanel);
+panel.add(ui.Label('Select Year:'));
+var yearSelect = ui.Select({items: ['2019','2020', '2021', '2022', '2023','2024','2025'], placeholder: 'Select Year'});
+panel.add(yearSelect);
+panel.add(ui.Label('Select Month:'));
+var monthSelect = ui.Select({items: ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12'], placeholder: 'Select Month'});
+panel.add(monthSelect);
+
+
+function getCloudFreeImage(year, month) {
+  var startDate = ee.Date.fromYMD(year, month, 1);
+  var endDate = startDate.advance(1, 'month');
+  var collection = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
+    .filterDate(startDate, endDate)
+    .map(function (image){
+      var cmask = image.select('MSK_CLDPRB').lt(10);
+      return image.updateMask(cmask)});
+    return collection.median();}
+
+function onWetlandClick(feature) {
+  var year = yearSelect.getValue();
+  var month = monthSelect.getValue();
+ 
+  
+  if (!year || !month ) {
+    // ui.alert('Please select year, month, and basis.');
+    // showError('Please select year, month, and basis.')
+    return;}
+  
+  var image = getCloudFreeImage(parseInt(year), parseInt(month));
+  var eutrophication = calculateEutrophication(image);
+   // Clip the eutrophication layer to the selected wetland
+  var wetlandGeometry = feature.geometry();
+  var eutrophicationClipped = eutrophication.clip(wetlandGeometry);
+  
+  // Display the result on the map
+  Map.layers().reset();
+  // Map.layers().add(wetlandsLayer);
+  Map.layers().add(ui.Map.Layer(eutrophicationClipped, {min: 1, max: 5, palette: ['brown','blue', 'cyan', 'green', 'red']}, 'Eutrophication'));
+  
+}
+
+Map.onClick(function(coords) {
+  var clickedFeature = wetlands.filterBounds(ee.Geometry.Point(coords.lon, coords.lat)).first();
+  // showError()
+  if (clickedFeature) {
+    onWetlandClick(clickedFeature);
+    var WetlandName = clickedFeature.get('WETNAME').getInfo();
+    var WetlandDes = clickedFeature.get('DESCR').getInfo();
+    inspector1.widgets().set(0, ui.Label({
+    value: 'Name: '+ WetlandName}));
+    inspector1.widgets().set(1, ui.Label({
+    value: 'Wetland Class: '+ WetlandDes}));  
+  } else {
+    // ui.alert('No wetland found at this location.');
+    // showError('No wetland found at this location.')
+  }
+});
+
+
+function calculateEutrophication(image) {
+  var bluemask = image.select('B2').lt(3000)
+  image = image.updateMask(bluemask);
+      image = index(image)
+        return classific(image)}
+
+
+
+var index = function (image){
+  var blue  = image.select('B2').multiply(0.0001);
+  var nir   = image.select('B8').multiply(0.0001);
+  var red   = image.select('B4').multiply(0.0001);
+  var green = image.select('B3').multiply(0.0001);
+  var swir  = image.select('B11').multiply(0.0001);
+  var swir2  = image.select('B12').multiply(0.0001);
+
+  var Alt_FAI = nir.subtract(red).add((swir.subtract(red)).multiply(0.5)).rename('Alt_FAI');
+  var FAI     = nir.subtract(red.add((swir.subtract(red)).multiply(0.1873))).rename('FAI');
+  var MAI     = green.add(red).subtract(swir.add((blue.subtract(swir)).multiply(0.9375))).rename('MAI');
+  var Slope   = (red.subtract(nir)).divide(0.177).rename('Slope');
+  var MNDWI2    = (green.subtract(swir2)).divide(green.add(swir2)).rename('MNDWI2')
+  return ee.Image([Alt_FAI,FAI,MAI,Slope,MNDWI2]);
+}
+var classific = function (image){
+  var land  = image.select('MNDWI2').lte(-0.15).and(image.select('MAI').gte(0.15)).rename('Land');
+  var Algae = image.select('MNDWI2').gt(-0.15).and(image.select('MAI').lt(0.15)).and(image.select('Alt_FAI').lte(-0.033)).rename('Algae');
+  var Water = image.select('MNDWI2').gt(-0.15).and(image.select('MAI').lt(0.15)).and(image.select('Alt_FAI').gt(-0.033)).and(image.select('Slope').gte(-0.1)).rename('Water');
+  var EV    = image.select('MNDWI2').gt(-0.15).and(image.select('MAI').lt(0.15)).and(image.select('Alt_FAI').gt(-0.033)).and(image.select('Slope').lt(-0.1)).and(image.select('FAI').gte(0.046)).rename('EV');
+  var SV    = image.select('MNDWI2').gt(-0.15).and(image.select('MAI').lt(0.15)).and(image.select('Alt_FAI').gt(-0.033)).and(image.select('Slope').lt(-0.1)).and(image.select('FAI').lt(0.046)).rename('SV');
+  var ClassImage = land.multiply(1).add(Water.multiply(2)).add(SV.multiply(3)).add(Algae.multiply(4)).add(EV.multiply(5)).rename('classification');
+  return ClassImage}
